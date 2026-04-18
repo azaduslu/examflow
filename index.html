@@ -184,7 +184,13 @@ body::before{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%
 
       <!-- RESULTS -->
       <div id="tab-results" class="tab-content" style="display:none">
-        <div class="section-header"><div class="section-title">Results</div></div>
+        <div class="section-header">
+          <div class="section-title">Results</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-outline btn-sm" onclick="exportExcel()">&#8595; Excel</button>
+            <button class="btn btn-outline btn-sm" onclick="exportPDF()">&#8595; PDF</button>
+          </div>
+        </div>
         <div class="card" style="overflow-x:auto"><div id="results-wrap"></div></div>
       </div>
     </div>
@@ -561,6 +567,86 @@ window.notify = function(msg, icon = '✓') {
   el.style.display = 'flex';
   clearTimeout(notifyTO);
   notifyTO = setTimeout(() => el.style.display = 'none', 2500);
+};
+
+// ── Export Excel ──
+window.exportExcel = async function() {
+  const [rSnap, eSnap] = await Promise.all([
+    getDocs(query(collection(db, 'results'), orderBy('date', 'desc'))),
+    getDocs(collection(db, 'exams'))
+  ]);
+  const exams = {};
+  eSnap.forEach(d => exams[d.id] = d.data());
+
+  let csv = 'Student Name,Exam,School,Score,Total,Percentage,Status,Date\n';
+  rSnap.forEach(d => {
+    const r = d.data();
+    const ex = exams[r.examId];
+    const total = ex ? ex.questions.reduce((s,q) => s+q.score, 0) : r.total || 0;
+    const pct = total ? Math.round(r.score / total * 100) : 0;
+    const status = pct >= 50 ? 'Pass' : 'Fail';
+    const school = ex ? (ex.school || '') : '';
+    const examTitle = ex ? ex.title : '(deleted)';
+    const date = new Date(r.date).toLocaleString();
+    csv += `"${r.studentName}","${examTitle}","${school}",${r.score},${total},${pct}%,${status},"${date}"\n`;
+  });
+
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'exam-results.csv';
+  a.click(); URL.revokeObjectURL(url);
+  notify('Excel file downloaded!', '✓');
+};
+
+// ── Export PDF ──
+window.exportPDF = async function() {
+  const [rSnap, eSnap] = await Promise.all([
+    getDocs(query(collection(db, 'results'), orderBy('date', 'desc'))),
+    getDocs(collection(db, 'exams'))
+  ]);
+  const exams = {};
+  eSnap.forEach(d => exams[d.id] = d.data());
+
+  const rows = rSnap.docs.map(d => {
+    const r = d.data();
+    const ex = exams[r.examId];
+    const total = ex ? ex.questions.reduce((s,q) => s+q.score, 0) : r.total || 0;
+    const pct = total ? Math.round(r.score / total * 100) : 0;
+    const pass = pct >= 50;
+    return `<tr>
+      <td>${r.studentName}</td>
+      <td>${ex ? ex.title : '(deleted)'}</td>
+      <td>${ex ? (ex.school||'-') : '-'}</td>
+      <td><b>${r.score}/${total}</b></td>
+      <td style="color:${pass?'#2d7a4f':'#c0392b'}">${pct}%</td>
+      <td style="color:${pass?'#2d7a4f':'#c0392b'}">${pass?'Pass':'Fail'}</td>
+      <td style="font-size:11px">${new Date(r.date).toLocaleString()}</td>
+    </tr>`;
+  }).join('');
+
+  const win = window.open('', '_blank');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Exam Results</title>
+  <style>
+    body{font-family:Arial,sans-serif;padding:24px;color:#1a1a1a}
+    h1{font-size:22px;margin-bottom:4px}
+    p{color:#888;font-size:13px;margin-bottom:20px}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th{background:#f5f4ef;padding:10px 12px;text-align:left;border-bottom:2px solid #ddd;font-size:11px;text-transform:uppercase;letter-spacing:0.05em}
+    td{padding:9px 12px;border-bottom:1px solid #eee}
+    tr:hover td{background:#fafaf8}
+    @media print{body{padding:0}}
+  </style></head><body>
+  <h1>Exam Results</h1>
+  <p>Generated: ${new Date().toLocaleString()} &nbsp;·&nbsp; Total submissions: ${rSnap.size}</p>
+  <table>
+    <thead><tr><th>Student</th><th>Exam</th><th>School</th><th>Score</th><th>%</th><th>Status</th><th>Date</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <script>window.onload=()=>window.print()<\/script>
+  </body></html>`);
+  win.document.close();
 };
 
 // ── Init ──
